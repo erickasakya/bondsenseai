@@ -27,3 +27,7 @@ Chat: Streamlit web interface for seamless user interaction
 - Streamlit -> Frontend/Chat Builder
 - Docker -> Application packaging tool
 - Docker Compose -> Application deployment
+
+## User Flow
+
+![User Flow](https://github.com/erickasakya/bondsenseai/blob/main/BondSenseAi.drawio.png?raw=true)
