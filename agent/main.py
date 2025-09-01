@@ -8,6 +8,7 @@ from langchain_core.messages import (
 )
 from langchain_core.tools import tool
 from langchain_groq import ChatGroq
+from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
@@ -38,14 +39,23 @@ class AuctionQuery(BaseModel):
 
 
 def auction_to_text(auction, action="next auction for "):
+    rate_text = (
+        f"{float(auction.rate):.3f}% in {auction.currency}"
+        if auction.rate
+        else "rate not yet available"
+    )
+    isin_text = (
+        f"(ISIN: {auction.isin})"
+        if getattr(auction, "isin", None)
+        else "ISIN not available"
+    )
+
     return (
-        f"The {action} {auction.tenure}-year {auction.instrument} "
-        f"(ISIN: {auction.isin}) is/was "
-        f"{auction.auction_date.strftime('%B %d, %Y')}. "
+        f"The {action}{auction.tenure}-year {auction.instrument} {isin_text} "
+        f"is/was on {auction.auction_date.strftime('%B %d, %Y')}. "
         f"Settlement is on {auction.settlement_date.strftime('%B %d, %Y')}, "
-        f"and it will mature on {auction.maturity_date.strftime('%B %d, %Y')}. "
-        f"The expected coupon rate is {float(auction.rate):.3f}% "
-        f"in {auction.currency}."
+        f"and maturity is on {auction.maturity_date.strftime('%B %d, %Y')}. "
+        f"The coupon rate is {rate_text}."
     )
 
 
@@ -102,7 +112,12 @@ def build_graph():
     def capture_tool_output(state: AgentState) -> AgentState:
         last_msg = state["messages"][-1]
         if last_msg.type == "tool":
-            state["tool_output"] = last_msg.content  # save tool result
+            state["tool_output"] = last_msg.content
+
+        tool_message = ToolMessage(
+            tool_call_id=last_msg.id, name=last_msg.name, content=last_msg.content
+        )
+        state["messages"] = state["messages"] + [tool_message]
         return state
 
     def extract_params(state: AgentState) -> AgentState:
@@ -121,24 +136,49 @@ def build_graph():
         return state
 
     def our_agent(state: AgentState) -> AgentState:
-        system_prompt = SystemMessage(
-            content="""
-    You are Bondy Chat, an AI financial assistant specializing in treasury bill and bond auctions in Uganda. 
-    You provide accurate, concise, and friendly answers about the primary market auctions conducted by the Bank of Uganda (BoU).
+        tool_output = state.get("tool_output")
+        tool_section = (
+            f"""
+This information comes from trusted tools and databases. Unless no data is available, consider it authoritative. 
+Your responses must clearly include:
+  • Instrument type (Bond or Bill)  
+  • Tenure (e.g., 2-year, 10-year)  
+  • ISIN  
+  • Coupon rate in % and currency  
+  • Auction date  
+  • Settlement date  
+  • Maturity date if available 
 
-    Knowledge Scope
-
-    You know about auction calendars, offer amounts, maturities, coupon rates, and results of treasury securities in Uganda.
-
-    You use trusted sources only: BoU auction announcements, auction results, and data from the BondSense AI database.
-
-    If information is not available or unclear, politely say you don’t have the latest details instead of guessing
-    ":\n" + tool_output if tool_output else ""
+{tool_output}
 """
+            if tool_output
+            else ""
+        )
+
+        system_prompt = SystemMessage(
+            #             content=f"""
+            # You are Bondy Chat, an AI financial assistant specializing in treasury bond auctions in Uganda.
+            # Provide concise, accurate answers using the tool outputs if they are available.
+            # If information is missing, say you don’t know.
+            # """
+            content=f"""
+            You are Bondy Chat, an AI financial assistant specializing in treasury bond auctions in Uganda.
+            You provide accurate, concise, and user-friendly answers.
+            Knowledge Scope:
+            - You know about auction calendars, maturities, coupon rates, and results of treasury securities in Uganda.
+            - You use trusted sources only: BondSense AI DB, BoU announcements, auction results.
+            - If tool output is provided, treat it as the correct and final information to answer the user's query.
+            - Do not add disclaimers about accuracy. If tool output is empty, then politely say you don't know.
+            {tool_section}
+
+            Tense rules:  
+            - For future auctions, say: "is scheduled for [date]"  
+            - For past auctions, say: "was held on [date]"
+            """
         )
         message = [system_prompt] + state["messages"]
         response = llm.invoke(message)
-        return {"messages": [response]}
+        return {"messages": state["messages"] + [response]}
 
     def should_continue(state: AgentState) -> str:
         messages = state["messages"]
@@ -174,7 +214,6 @@ def build_graph():
 
     graph.add_edge("tools", "capture_tool_output")
     graph.add_edge("capture_tool_output", "our_agent")
-    # graph.add_edge("tools", "our_agent")
 
     compiled_graph = graph.compile()
 
