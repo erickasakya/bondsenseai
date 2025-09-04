@@ -3,7 +3,7 @@ from db.database import get_session, create_db_and_tables
 import shutil
 from ingestions import main as ingestions
 from contextlib import asynccontextmanager
-from agent.main import build_graph, tools
+from agent.main import build_graph
 from pydantic import BaseModel
 from langchain_core.messages import AIMessage, HumanMessage
 import logging
@@ -36,7 +36,11 @@ async def upload_calendar(file: UploadFile = File(...), session=Depends(get_sess
         shutil.copyfileobj(file.file, buffer)
 
     df = ingestions.parse_excel(temp_file)
-    ingestions.insert_calendars(session, df)
+    if "competitive_offer" in df:
+        print(df)
+        ingestions.insert_auction_result(session, df)
+    else:
+        ingestions.insert_calendars(session, df)
     return {"message": "Data inserted successfully", "rows": len(df)}
 
 

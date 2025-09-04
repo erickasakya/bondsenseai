@@ -59,14 +59,16 @@ def auction_to_text(auction, action="next auction for "):
     )
 
 
+@tool
 def get_calendar(instrument: str, tenure: int):
     """Get the whole auction calendar for a given instrument. The instrument must be 'Bond' or 'Bill'"""
     with Session(engine) as session:
         return data_model.get_calendar(instrument, tenure, session)
 
 
+@tool
 def next_auction(instrument: str, tenure: int):
-    """Get the next auction date for a given instrument. The instrument must be 'Bond' or 'Bill'"""
+    """Get the next auction details for a given instrument. The instrument must be 'Bond' or 'Bill'"""
     auctions = []
     with Session(engine) as session:
         auctions = data_model.next_auction(instrument, tenure, session)
@@ -76,6 +78,7 @@ def next_auction(instrument: str, tenure: int):
     return auction_to_text(auctions)
 
 
+@tool
 def last_auction(instrument: str, tenure: int):
     """Get the last auction date for a given instrument. The instrument must be 'Bond' or 'Bill'."""
     auctions = []
@@ -83,9 +86,50 @@ def last_auction(instrument: str, tenure: int):
         auctions = data_model.last_auction(instrument, tenure, session)
     if not auctions:
         return "No auction found for this instrument and tenure."
+    return auctions
     return auction_to_text(auctions, action="last auction for ")
 
 
+@tool
+def last_auction_offer(instrument: str, tenure: int):
+    """Get the last auction offer details for a given instrument. The instrument must be 'Bond' or 'Bill'."""
+    auction = []
+    with Session(engine) as session:
+        auction = data_model.last_auction_offer(instrument, tenure, session)
+    if not auction:
+        return "No auction found for this instrument and tenure."
+
+    tense = "was held on"
+
+    isin_text = (
+        f"(ISIN: {auction.isin})"
+        if getattr(auction, "isin", None)
+        else "ISIN not available"
+    )
+    rate_text = f"{float(auction.rate):.2f}%" if auction.rate else "rate not available"
+    ytm_text = (
+        f"{float(auction.yield_to_maturity):.2f}%"
+        if getattr(auction, "yield_to_maturity", None)
+        else "N/A"
+    )
+    cutoff_text = (
+        f"{float(auction.cut_off_price):.3f}"
+        if getattr(auction, "cut_off_price", None)
+        else "N/A"
+    )
+
+    return (
+        f"The last auction for {tenure}-year {auction.instrument} {isin_text} {tense} {auction.auction_date.strftime('%Y-%m-%d')}. "
+        f"Settlement was on {auction.settlement_date.strftime('%Y-%m-%d')}, and maturity is on {auction.maturity_date.strftime('%Y-%m-%d')}. "
+        f"The coupon rate was {rate_text}, cut-off price {cutoff_text}, and yield to maturity {ytm_text}. "
+        f"Amounts: {auction.offered:,} offered vs {auction.tendered:,} tendered. "
+        f"Competitive offers: {auction.competitive_offer:,}, non-competitive offers: {auction.non_competitive_offer:,}. "
+        f"Accepted bids: {auction.accepted_bids:,} (competitive: {auction.accepted_competitive_bids:,}, non-competitive: {auction.accepted_non_competitive_bids:,}). "
+        f"Bid cover ratio was {auction.bid_cover_ratio:.3f}."
+    )
+
+
+@tool
 def count_auctions(instrument: str, tenure: int):
     """Count the total number of auctions for a given instrument. The instrument must be 'Bond' or 'Bill'"""
     auctions = []
@@ -96,7 +140,7 @@ def count_auctions(instrument: str, tenure: int):
     return auctions
 
 
-tools = [next_auction, last_auction, count_auctions, get_calendar]
+tools = [next_auction, last_auction, count_auctions, get_calendar, last_auction_offer]
 
 
 def build_graph():
@@ -148,6 +192,10 @@ Your responses must clearly include:
   • Auction date  
   • Settlement date  
   • Maturity date if available 
+  • Bid to cover ratio if available
+  • Offered vs Tendered if available
+  • Cut-off price if available
+  • Yield to maturity if available
 
 {tool_output}
 """
@@ -164,12 +212,19 @@ Your responses must clearly include:
             content=f"""
             You are Bondy Chat, an AI financial assistant specializing in treasury bond auctions in Uganda.
             You provide accurate, concise, and user-friendly answers.
+            
             Knowledge Scope:
             - You know about auction calendars, maturities, coupon rates, and results of treasury securities in Uganda.
             - You use trusted sources only: BondSense AI DB, BoU announcements, auction results.
             - If tool output is provided, treat it as the correct and final information to answer the user's query.
             - Do not add disclaimers about accuracy. If tool output is empty, then politely say you don't know.
+            
             {tool_section}
+
+            Tools:
+            - Use `last_auction` or `next_auction` for date- and calendar-focused questions.
+            - Use `last_auction_offer` when the user asks about yields, offers, cut-off prices, bid amounts, or bid cover ratios.
+            - Always prefer `last_auction_offer` if the question is about "yield" or "offer" details.
 
             Tense rules:  
             - For future auctions, say: "is scheduled for [date]"  
