@@ -19,13 +19,20 @@ if "messages" not in st.session_state:
 
 def generate_response(msg: str):
 
-    backend_url = config["BACKEND_URL"]
-    response = requests.post(
-        f"{backend_url}/chat",
-        json={"message": msg},
-    )
-    st.session_state.messages.append(AIMessage(content=response.json()["content"]))
-    st.session_state.latest_msgs_sent = HumanMessage(content=msg)
+    try:
+        backend_url = config["BACKEND_URL"]
+        response = requests.post(
+            f"{backend_url}/chat",
+            json={"message": msg},
+        )
+        st.session_state.messages.append(AIMessage(content=response.json()["content"]))
+        st.session_state.latest_msgs_sent = HumanMessage(content=msg)
+    except Exception as e:
+        st.error(f"Error: {e}")
+        response = {
+            "content": "Sorry, there was an error in our system. Please try again."
+        }
+        st.session_state.messages.append(AIMessage(content=response["content"]))
     return response
 
 
